@@ -1,8 +1,6 @@
-# Stock Prediction Microservices
+# Prediction Microservices
 
 This project provides a microservices-based architecture for stock returns prediction using the IntradayCurvePredictor class.
-
-## Architecture
 
 The system consists of three microservices:
 
@@ -65,36 +63,25 @@ docker-compose up --build -d
 ### Returns Service (port 5001)
 
 - `GET /health`: Health check endpoint
-- `POST /initialize`: Initialize predictor with data file
-  ```
-  {
-    "file_path": "data/quantum_price_data_winston.xlsx"
-  }
-  ```
 - `GET /returns?tickers=IONQ,QBTS`: Get returns for specified tickers
-- `POST /augmented-features`: Generate augmented features for raw data
 
 ### Prediction Service (port 5002)
 
 - `GET /health`: Health check endpoint
-- `POST /initialize`: Initialize predictor with data file
-  ```
-  {
-    "file_path": "data/quantum_price_data_winston.xlsx",
-    "returns_service_url": "http://returns-service:5001"
-  }
-  ```
 - `POST /predict`: Create prediction using XGBoost
   ```
-  {
-    "target_ticker": "IONQ",
-    "training_days": 30,
-    "forward_periods": 27,
-    "n_features": 10,
-    "n_corr_stocks": 2,
-    "cross_validation": false,
-    "display_service_url": "http://display-service:5003"
-  }
+{
+    'target_ticker': "QSI",
+    'model_type': "xgb",      # can be arima, var, or xgb
+    'training_days': 30,             
+    'forward_periods': 27,           
+    'n_features': 10,                
+    'n_corr_stocks': 2,              
+    'cross_validation': False,       
+    'use_pca': False,        # only for VAR
+    'pca_variance': 0.95,    # only for VAR
+    'df_data': df_to_json(df_recent),
+}
   ```
 - `POST /save-model`: Save the current model
   ```
@@ -115,41 +102,6 @@ docker-compose up --build -d
   ```
 - `GET /predictions`: Get list of stored predictions
 - `GET /predictions/<id>`: Get details of a specific prediction
-
-## Example Workflow
-
-1. Initialize the Returns Service:
-   ```bash
-   curl -X POST http://localhost:5001/initialize \
-     -H "Content-Type: application/json" \
-     -d '{"file_path": "data/quantum_price_data_winston.xlsx"}'
-   ```
-
-2. Initialize the Prediction Service:
-   ```bash
-   curl -X POST http://localhost:5002/initialize \
-     -H "Content-Type: application/json" \
-     -d '{"file_path": "data/quantum_price_data_winston.xlsx", "returns_service_url": "http://returns-service:5001"}'
-   ```
-
-3. Run a prediction:
-   ```bash
-   curl -X POST http://localhost:5002/predict \
-     -H "Content-Type: application/json" \
-     -d '{
-       "target_ticker": "IONQ",
-       "training_days": 30,
-       "forward_periods": 27,
-       "n_features": 10,
-       "n_corr_stocks": 2,
-       "cross_validation": false,
-       "display_service_url": "http://display-service:5003"
-     }'
-   ```
-
-4. View results:
-   - Open http://localhost:5003 in your browser
-   - Or check the prediction service output: `docker logs prediction-service`
 
 ## Important Notes
 
