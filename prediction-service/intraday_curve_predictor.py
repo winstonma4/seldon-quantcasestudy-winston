@@ -986,9 +986,10 @@ class IntradayCurvePredictor:
         
         mi_scores /= n_splits
         correlations = X.corrwith(y)
-
+        features = list(X.columns)
+        
         importance_df = pd.DataFrame({
-            'feature': X.columns,
+            'feature': features,
             'mutual_info': mi_scores,
             'correlation': correlations,
             'abs_correlation': correlations.abs()
@@ -1581,7 +1582,7 @@ class IntradayCurvePredictor:
                 self.arima_model = fitted
                 self.arima_order = order
                 
-                print(f"\nGenerated {len(forecasts)} predictions for {next_day.date()}")
+                print(f"\nGenerated {len(forecasts)} predictions for {next_day}")
                 
                 return {
                     'predictions': predictions_df,
@@ -1677,6 +1678,7 @@ class IntradayCurvePredictor:
         start_date = raw_df.index[0].date()
         end_date = raw_df.index[-1].date()
         print(f"Input data range: {start_date} to {end_date}")
+        pca_model = None
 
          # initialize and train the model on the first set, and walk forward cross validate on subsequent sets
         if cross_validation:
@@ -2117,7 +2119,7 @@ class IntradayCurvePredictor:
             
             avg_significant_ratio = np.mean([d['significant_ratio'] for d in var_diagnostics])
             
-            results = {
+            results = {'importance_df':importance_df,
                 'metrics_by_split': metrics,
                 'harmonic_metrics': {
                     'harmonic_mse': self._harmonic_mean(np.array(metrics['mse'])),
@@ -2158,7 +2160,216 @@ class IntradayCurvePredictor:
             print(f"Average significant VAR relationships: {avg_significant_ratio:.2%}")
             
             return results
-    
+
+        else:    # prediction only mode
+            
+            print("\nRunning VAR model in prediction mode (no cross-validation)")
+            
+            all_dates = pd.Series(raw_df.index.date).unique()
+            train_start_date = all_dates[-min(training_days, len(all_dates))]
+            train_end_date = all_dates[-1]  # Most recent date
+            
+            print(f"Training period: {train_start_date} to {train_end_date}")
+            
+            train_mask = ((raw_df.index.date >= train_start_date) & 
+                         (raw_df.index.date <= train_end_date))
+            train_raw = raw_df[train_mask].copy()
+            
+            # augment training data
+            print("Augmenting features for training data...")
+            train_augmented = self.augment_features(train_raw)
+            X_train, y_train = self.create_prediction_target(train_augmented, target_ticker, 
+                                                          forward_periods=forward_periods, training=True)
+            
+            var_train_df = pd.DataFrame()
+            
+            # add target stock and index returns
+            var_train_df[target_ticker] = self.returns[target_ticker].loc[X_train.index]
+            for index in self.index_tickers:
+                var_train_df[index] = self.returns[index].loc[X_train.index]
+            
+            # check for previous model to use for feature selection
+            reusing_model = False
+            if hasattr(self, 'var_model') and self.var_model is not None:
+                print("Using features and configuration from previous VAR model")
+                top_features = self.var_model['top_features']
+                use_pca = self.var_model.get('use_pca', False)
+                pca_model = self.var_model.get('pca_model', None)
+                previously_used_features = self.var_model.get('features', [])
+                
+                # get previously identified significant correlations
+                significant_pairs = self.var_model.get('significant_pairs', [])
+                if significant_pairs:
+                    print(f"Using {len(significant_pairs)} significant relationships from previous model")
+                    
+                reusing_model = True
+            else:
+                # if no previous model, perform feature selection
+                print("No previous VAR model found. Performing feature selection...")
+                importance_df = self.analyze_feature_importance(X_train, y_train)
+                top_features = importance_df.nlargest(n_features, 'mutual_info')['feature'].tolist()
+                significant_pairs = []
+                
+                print("\nSelected top features based on mutual information:")
+                for i, feat in enumerate(top_features):
+                    score = importance_df.loc[feat, 'mutual_info']
+                    print(f"{i+1}. {feat} (MI: {score:.4f})")
+            
+            # add n_corr_stocks
+            if reusing_model and hasattr(self.var_model, 'correlated_tickers'):
+                print("\nUsing correlated stocks from previous model")
+                top_corr_tickers = self.var_model['correlated_tickers']
+            else:
+                print("\nFinding correlated stocks...")
+                target_returns = self.returns[target_ticker]
+                correlations = {}
+                for ticker in self.quantum_tickers:
+                    if ticker != target_ticker:
+                        corr = target_returns.corr(self.returns[ticker])
+                        correlations[ticker] = abs(corr)
+                
+                top_corr_tickers = sorted(correlations.items(), 
+                                         key=lambda x: x[1], 
+                                         reverse=True)[:n_corr_stocks]
+            
+            print("Correlated Quantum Stocks:")
+            for ticker, corr in top_corr_tickers:
+                print(f"- {ticker} (correlation: {corr:.3f})")
+                var_train_df[ticker] = self.returns[ticker].loc[X_train.index]
+            
+            # add engineered features or PCA features
+            if not use_pca:
+                print("Adding engineered features...")
+                for feature in top_features:
+                    if feature in X_train.columns:
+                        var_train_df[f'feature_{feature}'] = X_train[feature]
+            else:
+                print("Applying PCA transformation...")
+                if pca_model is not None:
+                    print("Using pre-existing PCA model")
+                    feature_df = pd.DataFrame(index=X_train.index)
+                    for feature in X_train.columns:
+                        feature_df[feature] = X_train[feature]                     
+                    scaler = StandardScaler()
+                    train_scaled = scaler.fit_transform(feature_df)
+                    train_pca = pca_model.transform(train_scaled)
+                    n_components = min(pca_model.n_components_, train_pca.shape[1])
+                    train_pca_df = pd.DataFrame(
+                        train_pca[:, :n_components],
+                        index=X_train.index,
+                        columns=[f'PC{i+1}' for i in range(n_components)]
+                    )
+                    for col in train_pca_df.columns:
+                        var_train_df[f'pca_{col}'] = train_pca_df[col]
+                else:
+                    # new PCA model
+                    X_pca, pca_model, loadings = self.reduce_dimensionality(
+                        X_train, var_threshold=pca_variance
+                    )
+                    n_pca_components = X_pca.shape[1]
+                    print(f"Created new PCA model with {n_pca_components} components explaining {pca_variance:.0%} of variance")
+                    for col in X_pca.columns:
+                        var_train_df[f'pca_{col}'] = X_pca[col]
+            
+            # scale features and check for existing feature set
+            if not use_pca:
+                print("Applying selective feature scaling...")
+                scaling_results = self.selective_feature_scaling(var_train_df)
+                var_train_scaled = scaling_results['train_scaled']
+                scaler = scaling_results['scaler']
+                
+                if reusing_model and previously_used_features:
+                    print(f"Using feature set from previous model")
+                    if isinstance(previously_used_features, dict):
+                        if 'all' in previously_used_features:
+                            previously_used_features = previously_used_features['all']
+                        else:
+                            print("Warning: Feature dictionary does not contain 'all' key. Using current features.")
+                            previously_used_features = list(var_train_scaled.columns)
+                    elif not isinstance(previously_used_features, list):
+                        print("Warning: Previously used features is not in expected format. Using current features.")
+                        previously_used_features = list(var_train_scaled.columns)
+                    
+                    # only include features that exist in both datasets
+                    available_features = set(var_train_scaled.columns).intersection(previously_used_features)
+                    missing_features = set(previously_used_features) - available_features
+                    
+                    if missing_features:
+                        print(f"Warning: {len(missing_features)} features from previous model are missing")
+                        
+                    if len(available_features) == 0:
+                        print("No features from previous model are available. Using all current features.")
+                        var_train_scaled_reduced = var_train_scaled.copy()
+                    else:
+                        print(f"Using {len(available_features)} features from previous model")
+                        var_train_scaled_reduced = var_train_scaled[list(available_features)]
+                else:
+                    print("Checking for multicollinearity...")
+                    var_train_scaled_reduced, removed_features = reduce_multicollinearity(var_train_scaled, threshold=8.0)
+                    print(f"Removed {len(removed_features)} features due to high VIF")
+
+            else:
+                # don't need multicollinearity check with PCA
+                var_train_scaled_reduced = var_train_df.copy()
+                scaler = None
+            
+            print("Fitting VAR model...")
+            
+            # calculate max lags based on data size
+            max_lags = min(5, len(var_train_scaled_reduced) // (2 * var_train_scaled_reduced.shape[1]))
+            max_lags = max(1, max_lags)   
+            
+            print(f"Max lag consideration: {max_lags}")
+            
+            model = VAR(var_train_scaled_reduced)
+            fitted = model.fit(maxlags=max_lags, ic='aic')
+            selected_lags = fitted.k_ar
+            
+            print(f"Selected lag order: {selected_lags}")
+            
+            var_analysis = self.analyze_var_coefficients(fitted, list(var_train_scaled_reduced.columns))
+            new_significant_pairs = var_analysis['significant_pairs']
+            for pair in new_significant_pairs:
+                if pair not in significant_pairs:
+                    significant_pairs.append(pair)
+            
+            last_points = var_train_scaled_reduced.iloc[-selected_lags:]
+            forecasts = fitted.forecast(last_points.values, steps=forward_periods)
+            target_idx = var_train_scaled_reduced.columns.get_loc(target_ticker)
+            target_forecasts = forecasts[:, target_idx]
+
+            next_day = train_end_date + pd.Timedelta(days=1)
+            next_day_open = pd.Timestamp.combine(next_day, pd.Timestamp('09:30').time())
+            next_day_periods = [next_day_open + pd.Timedelta(minutes=15*i) for i in range(forward_periods)]
+            
+            self.var_model = {
+                'model': fitted,
+                'features': list(var_train_scaled_reduced.columns),
+                'scaler': scaler,
+                'top_features': top_features,
+                'significant_pairs': significant_pairs,
+                'pca_model': pca_model if use_pca else None,
+                'use_pca': use_pca,
+                'correlated_tickers': top_corr_tickers
+            }
+            
+            predictions_df = pd.DataFrame({
+                'predicted': target_forecasts
+            }, index=next_day_periods[:len(target_forecasts)])
+            
+            print(f"\nGenerated {len(target_forecasts)} predictions for {next_day}")
+            
+            return {
+                'predictions': predictions_df,
+                'model': fitted,
+                'last_training_date': train_end_date,
+                'prediction_date': next_day,
+                'significant_pairs': significant_pairs,
+                'var_analysis': var_analysis,
+                'selected_lags': selected_lags,
+                'feature_columns': list(var_train_scaled_reduced.columns)
+            }
+
     def analyze_var_coefficients(self, fitted_var_model, var_names):
         """
         Analyze the significance of cross-variable relationships in VAR model.
