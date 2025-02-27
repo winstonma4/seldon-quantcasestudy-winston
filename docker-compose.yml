@@ -1,0 +1,62 @@
+services:
+  returns-service:
+    build:
+      context: ./returns-service
+      dockerfile: Dockerfile
+    container_name: returns-service
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./data:/app/data
+    networks:
+      - stock-prediction-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  prediction-service:
+    build:
+      context: ./prediction-service
+      dockerfile: Dockerfile
+    container_name: prediction-service
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    networks:
+      - stock-prediction-network
+    depends_on:
+      - returns-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  display-service:
+    build:
+      context: ./display-service
+      dockerfile: Dockerfile
+    container_name: display-service
+    ports:
+      - "5003:5003"
+    networks:
+      - stock-prediction-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  stock-prediction-network:
+    driver: bridge

@@ -1,0 +1,14 @@
+flask==2.0.1
+werkzeug==2.0.3
+pandas==1.3.4
+numpy==1.21.4
+scipy==1.7.3
+statsmodels==0.13.1
+scikit-learn==1.0.1
+xgboost==1.5.0
+matplotlib==3.5.0
+seaborn==0.11.2
+pandas-market-calendars==3.2
+openpyxl==3.0.9
+requests==2.26.0
+gunicorn==20.1.0
