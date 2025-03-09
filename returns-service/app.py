@@ -58,9 +58,6 @@ def initialize_service(file_path='data/quantum_price_data_winston.xlsx'):
         
         df = predictor.parse_excel_to_df(file_path)
         
-        # Check stationarity to generate returns
-        stationarity_results = predictor.check_returns_stationarity(df)
-        
         logger.info(f"Predictor initialized successfully with {file_path}")
         logger.info(f"Available tickers: {predictor.tickers}")
         logger.info(f"Data points: {len(df)}")
@@ -185,83 +182,6 @@ def get_returns():
         
     except Exception as e:
         logger.error(f"Error getting returns: {str(e)}")
-        logger.error(traceback.format_exc())
-        return jsonify({
-            "status": "error", 
-            "message": str(e)
-        }), 500
-
-@app.route('/augmented-features', methods=['POST'])
-def get_augmented_features():
-    """Generate augmented features for raw data"""
-    global predictor
-    
-    if predictor is None:
-        return jsonify({
-            "status": "error",
-            "message": "Predictor not initialized. Call /initialize first."
-        }), 400
-    
-    try:
-        # Get raw data from request
-        data = request.json
-        
-        if 'df' not in data:
-            return jsonify({
-                "status": "error",
-                "message": "No dataframe provided in request"
-            }), 400
-            
-        # Convert JSON to DataFrame
-        try:
-            # Recreate MultiIndex DataFrame
-            df_dict = data['df']
-            reconstructed_df = pd.DataFrame()
-            
-            for ticker in df_dict:
-                for field in df_dict[ticker]:
-                    # Convert string dates back to datetime
-                    dates = [datetime.fromisoformat(d) for d in df_dict[ticker][field]['index']]
-                    values = df_dict[ticker][field]['values']
-                    
-                    # Create series
-                    series = pd.Series(values, index=dates)
-                    
-                    # Add to DataFrame with MultiIndex
-                    reconstructed_df[(ticker, field)] = series
-                    
-            logger.info(f"Successfully reconstructed DataFrame with shape: {reconstructed_df.shape}")
-            
-            # Augment features
-            augmented_df = predictor.augment_features(reconstructed_df)
-            
-            # Convert augmented DataFrame to dictionary for JSON serialization
-            result_dict = {}
-            for (ticker, field) in augmented_df.columns:
-                if ticker not in result_dict:
-                    result_dict[ticker] = {}
-                
-                series = augmented_df[(ticker, field)]
-                result_dict[ticker][field] = {
-                    'index': [idx.isoformat() for idx in series.index],
-                    'values': series.values.tolist()
-                }
-                
-            return jsonify({
-                "status": "success",
-                "augmented_features": result_dict
-            })
-            
-        except Exception as e:
-            logger.error(f"Error converting JSON to DataFrame: {str(e)}")
-            logger.error(traceback.format_exc())
-            return jsonify({
-                "status": "error", 
-                "message": f"Error processing dataframe: {str(e)}"
-            }), 400
-            
-    except Exception as e:
-        logger.error(f"Error getting augmented features: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({
             "status": "error", 

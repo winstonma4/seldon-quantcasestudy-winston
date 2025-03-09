@@ -204,7 +204,7 @@ class IntradayCurvePredictor:
         result = a / b
         return result.replace([np.inf, -np.inf], fill_value)
     
-    def _harmonic_mean(self, values: np.ndarray) -> float:
+    def _harmonic_mean(self, values):
         valid_values = values[values > 0]
         if len(valid_values) == 0:
             return np.nan
@@ -526,9 +526,9 @@ class IntradayCurvePredictor:
         """
         if effect_size < 0.01:
             return "Negligible effect"
-        elif effect_size < 0.04:
+        elif effect_size < 0.06:
             return "Small effect"
-        elif effect_size < 0.16:
+        elif effect_size < 0.14:
             return "Medium effect"
         else:
             return "Large effect"
@@ -684,8 +684,6 @@ class IntradayCurvePredictor:
     
     def augment_features(self, df):
         """
-        Feature engineering including volume analysis.
-        
         Creates a comprehensive set of features for time series prediction including
         price-based features, volume metrics, momentum indicators, technical indicators,
         and cross-asset relationship metrics.
@@ -1058,9 +1056,9 @@ class IntradayCurvePredictor:
         # RMSE plot
         ax1.plot(splits, cv_results['metrics_by_split']['rmse'], 
                  label='RMSE', marker='o', color='blue')
-        ax1.axhline(y=cv_results['harmonic_metrics']['harmonic_rmse'], 
+        ax1.axhline(y=cv_results['avg_metrics']['mean_rmse'], 
                     color='r', linestyle='--', 
-                    label=f"Harmonic Mean: {cv_results['harmonic_metrics']['harmonic_rmse']:.6f}")
+                    label=f"Average: {cv_results['avg_metrics']['mean_rmse']:.6f}")
         ax1.set_title('RMSE Across CV Splits')
         ax1.set_xlabel('Split Number')
         ax1.set_ylabel('RMSE')
@@ -1070,9 +1068,9 @@ class IntradayCurvePredictor:
         # MAE plot
         ax2.plot(splits, cv_results['metrics_by_split']['mae'], 
                  label='MAE', marker='o', color='green')
-        ax2.axhline(y=cv_results['harmonic_metrics']['harmonic_mae'], 
+        ax2.axhline(y=cv_results['avg_metrics']['mean_mae'], 
                     color='r', linestyle='--', 
-                    label=f"Harmonic Mean: {cv_results['harmonic_metrics']['harmonic_mae']:.6f}")
+                    label=f"Average: {cv_results['avg_metrics']['mean_mae']:.6f}")
         ax2.set_title('MAE Across CV Splits')
         ax2.set_xlabel('Split Number')
         ax2.set_ylabel('MAE')
@@ -1082,9 +1080,12 @@ class IntradayCurvePredictor:
         # error distributions
         ax3.hist(cv_results['metrics_by_split']['rmse'], bins=20, 
                  alpha=0.7, color='blue', density=True)
-        ax3.axvline(x=cv_results['harmonic_metrics']['harmonic_rmse'], 
+        # ax3.axvline(x=cv_results['harmonic_metrics']['harmonic_rmse'], 
+        #             color='r', linestyle='--', 
+        #             label=f"Harmonic Mean RMSE")
+        ax3.axvline(x=cv_results['avg_metrics']['mean_rmse'], 
                     color='r', linestyle='--', 
-                    label=f"Harmonic Mean RMSE")
+                    label=f"Average RMSE")
         ax3.set_title('Distribution of RMSE')
         ax3.set_xlabel('RMSE')
         ax3.set_ylabel('Density')
@@ -1092,9 +1093,12 @@ class IntradayCurvePredictor:
         
         ax4.hist(cv_results['metrics_by_split']['mae'], bins=20, 
                  alpha=0.7, color='green', density=True)
-        ax4.axvline(x=cv_results['harmonic_metrics']['harmonic_mae'], 
+        # ax4.axvline(x=cv_results['harmonic_metrics']['harmonic_mae'], 
+        #             color='r', linestyle='--', 
+        #             label=f"Harmonic Mean MAE")
+        ax4.axvline(x=cv_results['avg_metrics']['mean_mae'], 
                     color='r', linestyle='--', 
-                    label=f"Harmonic Mean MAE")
+                    label=f"Average MAE")
         ax4.set_title('Distribution of MAE')
         ax4.set_xlabel('MAE')
         ax4.set_ylabel('Density')
@@ -1150,7 +1154,7 @@ class IntradayCurvePredictor:
         Parameters:
         -----------
         cv_results : dict
-            Dictionary containing cross-validation results from cross_validate_arima
+            Dictionary containing cross-validation results
         """
         predictions = cv_results['predictions']
         
@@ -1793,7 +1797,7 @@ class IntradayCurvePredictor:
                 
                 # check for multicollinearity 
                 print("\nChecking for multicollinearity (this will be applied to all splits)...")
-                initial_var_train_scaled_reduced, initially_removed_features = reduce_multicollinearity(initial_var_train_scaled, threshold=8.0)
+                initial_var_train_scaled_reduced, initially_removed_features = reduce_multicollinearity(initial_var_train_scaled, threshold=5.0)
                 multicollinearity_approved_columns = initial_var_train_scaled_reduced.columns
                 print(f"Identified {len(multicollinearity_approved_columns)} features to use across all splits after multicollinearity check")
                 print(f"Removed {len(initially_removed_features)} features due to multicollinearity: {initially_removed_features}")
@@ -2305,7 +2309,7 @@ class IntradayCurvePredictor:
                         var_train_scaled_reduced = var_train_scaled[list(available_features)]
                 else:
                     print("Checking for multicollinearity...")
-                    var_train_scaled_reduced, removed_features = reduce_multicollinearity(var_train_scaled, threshold=8.0)
+                    var_train_scaled_reduced, removed_features = reduce_multicollinearity(var_train_scaled, threshold=5.0)
                     print(f"Removed {len(removed_features)} features due to high VIF")
 
             else:
